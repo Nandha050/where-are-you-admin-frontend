@@ -12,6 +12,7 @@ import {
     Route,
     LogOut,
     UserRound,
+    UsersRound,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
@@ -19,6 +20,7 @@ const navItems = [
     { label: "Dashboard", icon: LayoutDashboard, href: "/Dashboard" },
     { label: "Buses", icon: Bus, href: "/Dashboard/buses" },
     { label: "Drivers", icon: UserRound, href: "/drivers" },
+    { label: "Users", icon: UsersRound, href: "/users" },
     { label: "Route Planning", icon: Route, href: "/route-management" },
 ];
 

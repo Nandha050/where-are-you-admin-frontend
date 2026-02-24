@@ -258,4 +258,57 @@ export interface CreateDriverPayload {
 export const createDriver = (data: CreateDriverPayload) =>
     tryDriverRequest<{ driver: Driver }>("post", data);
 
+// ─── Users ───────────────────────────────────────────────────────────────────
+
+export interface User {
+    _id?: string;
+    id?: string;
+    name: string;
+    email?: string;
+    phone?: string;
+    memberId?: string;
+    role?: string;
+    createdAt?: string;
+}
+
+export interface CreateUserPayload {
+    name: string;
+    memberId: string;
+    password: string;
+    email?: string;
+    phone?: string;
+}
+
+const USER_ENDPOINTS = [
+    "/api/auth/admin/users",
+    "/api/auth/admin/users/",
+    "/api/auth/admin/user",
+    "/api/admin/users",
+    "/api/users",
+    "/api/user",
+];
+
+const tryUserRequest = async <T>(method: "get" | "post", payload?: unknown) => {
+    let lastError: unknown;
+    for (const path of USER_ENDPOINTS) {
+        try {
+            if (method === "get") {
+                return await api.request<T>({ url: path, method: "get" });
+            }
+            return await api.request<T>({ url: path, method: "post", data: payload });
+        } catch (err: unknown) {
+            lastError = err;
+            const status = (err as { response?: { status?: number } })?.response?.status;
+            if (status !== 404) throw err;
+        }
+    }
+    throw lastError ?? new Error("User endpoint not found");
+};
+
+export const getUsers = () =>
+    tryUserRequest<{ users: User[] } | { data: User[] }>("get");
+
+export const createUser = (data: CreateUserPayload) =>
+    tryUserRequest<{ user: User } | User>("post", data);
+
 export default api;
