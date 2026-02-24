@@ -1,7 +1,5 @@
 "use client";
 
-import { useState } from "react";
-import { Sidebar } from "@/components/layout/sidebasr";
 import { Header } from "@/components/layout/header";
 import { StatsCard } from "@/components/dashboards/stats-card";
 import { FleetMap } from "@/components/dashboards/fleet-map";
@@ -50,42 +48,37 @@ const statsData = [
 ];
 
 export default function DashboardPage() {
-    const [sidebarOpen, setSidebarOpen] = useState(true);
-
     return (
-        <div className="flex h-screen bg-gray-50 font-sans overflow-hidden">
-            <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-            <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-                <Header onToggleSidebar={() => setSidebarOpen((prev) => !prev)} />
-                <main className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-                    {/* Page Title */}
+        <div className="flex flex-col h-full overflow-hidden">
+            <Header />
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+                {/* Page Title */}
+                <div>
+                    <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Fleet Overview</h1>
+                    <p className="text-sm text-gray-500 mt-1">
+                        Real-time monitoring and operational status for all active units.
+                    </p>
+                </div>
+
+                {/* Stats Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6">
+                    {statsData.map((stat) => (
+                        <StatsCard key={stat.title} {...stat} />
+                    ))}
+                </div>
+
+                {/* Fleet Map + Recent Activity */}
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
+                    <div className="xl:col-span-2">
+                        <FleetMap />
+                    </div>
                     <div>
-                        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Fleet Overview</h1>
-                        <p className="text-sm text-gray-500 mt-1">
-                            Real-time monitoring and operational status for all active units.
-                        </p>
+                        <RecentActivity />
                     </div>
+                </div>
 
-                    {/* Stats Cards */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6">
-                        {statsData.map((stat) => (
-                            <StatsCard key={stat.title} {...stat} />
-                        ))}
-                    </div>
-
-                    {/* Fleet Map + Recent Activity */}
-                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
-                        <div className="xl:col-span-2">
-                            <FleetMap />
-                        </div>
-                        <div>
-                            <RecentActivity />
-                        </div>
-                    </div>
-
-                    {/* Weekly Trend */}
-                    <WeeklyTrend />
-                </main>
+                {/* Weekly Trend */}
+                <WeeklyTrend />
             </div>
         </div>
     );
