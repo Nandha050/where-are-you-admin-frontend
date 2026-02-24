@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
     LayoutDashboard,
@@ -13,11 +15,11 @@ import {
 } from "lucide-react";
 
 const navItems = [
-    { label: "Dashboard", icon: LayoutDashboard, active: true },
-    { label: "Buses", icon: Bus },
-    { label: "Drivers", icon: UserCircle },
-    { label: "Routes", icon: Map },
-    { label: "Users", icon: Users },
+    { label: "Dashboard", icon: LayoutDashboard, href: "/Dashboard" },
+    { label: "Bus Management", icon: Bus, href: "/Dashboard/buses" },
+    { label: "Live Tracking", icon: UserCircle, href: "/Dashboard/live-tracking" },
+    { label: "Route Planning", icon: Map, href: "/Dashboard/route-planning" },
+    { label: "Driver Registry", icon: Users, href: "/Dashboard/drivers" },
 ];
 
 interface SidebarProps {
@@ -26,6 +28,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
+    const pathname = usePathname();
+
     return (
         <>
             {/* Mobile backdrop */}
@@ -62,7 +66,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                             isOpen ? "opacity-100 w-auto" : "opacity-0 w-0 overflow-hidden"
                         )}
                     >
-                        CityTrack
+                        BusTrack Pro
                     </span>
                     {/* Close button — mobile only */}
                     <button
@@ -75,9 +79,16 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
                 {/* Nav */}
                 <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
-                    {navItems.map(({ label, icon: Icon, active }) => (
-                        <button
+                    {navItems.map(({ label, icon: Icon, href }) => {
+                        const active =
+                            href === "/Dashboard"
+                                ? pathname === href
+                                : pathname?.startsWith(href);
+
+                        return (
+                        <Link
                             key={label}
+                            href={href}
                             title={!isOpen ? label : undefined}
                             className={cn(
                                 "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors",
@@ -101,8 +112,8 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                             >
                                 {label}
                             </span>
-                        </button>
-                    ))}
+                        </Link>
+                    )})}
 
                     {/* System section */}
                     <div className="pt-4 pb-1">
