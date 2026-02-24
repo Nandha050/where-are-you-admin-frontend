@@ -6,8 +6,6 @@ import { cn } from "@/lib/utils";
 import {
     LayoutDashboard,
     Bus,
-    Users,
-    UserCircle,
     Bell,
     Settings,
     X,
@@ -16,10 +14,8 @@ import {
 
 const navItems = [
     { label: "Dashboard", icon: LayoutDashboard, href: "/Dashboard" },
-    { label: "Buses", icon: Bus, href: "/buses" },
-    { label: "Drivers", icon: UserCircle, href: "/drivers" },
+    { label: "Buses", icon: Bus, href: "/Dashboard/buses" },
     { label: "Route Planning", icon: Route, href: "/route-management" },
-    { label: "Users", icon: Users, href: "/users" },
 ];
 
 interface SidebarProps {
