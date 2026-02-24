@@ -53,6 +53,82 @@ const toNumber = (value: unknown): number | null => {
     return null;
 };
 
+const isValidCoordinate = (lat: number, lng: number) => {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return false;
+    if (lat === 0 && lng === 0) return false;
+    return true;
+};
+
+const parseRoutePoint = (point: unknown): { lat: number; lng: number } | null => {
+    const p = point as {
+        lat?: number | string;
+        lng?: number | string;
+        latitude?: number | string;
+        longitude?: number | string;
+        coordinates?: [number | string, number | string];
+    };
+
+    if (Array.isArray(p?.coordinates) && p.coordinates.length >= 2) {
+        const lngFromArray = toNumber(p.coordinates[0]);
+        const latFromArray = toNumber(p.coordinates[1]);
+        if (latFromArray !== null && lngFromArray !== null && isValidCoordinate(latFromArray, lngFromArray)) {
+            return { lat: latFromArray, lng: lngFromArray };
+        }
+    }
+
+    const lat = toNumber(p?.lat) ?? toNumber(p?.latitude);
+    const lng = toNumber(p?.lng) ?? toNumber(p?.longitude);
+    if (lat !== null && lng !== null && isValidCoordinate(lat, lng)) {
+        return { lat, lng };
+    }
+
+    return null;
+};
+
+const findRouteCoordinateByHints = (
+    route: unknown,
+    pointHint: "start" | "end"
+): { lat: number; lng: number } | null => {
+    if (!route || typeof route !== "object") return null;
+    const obj = route as Record<string, unknown>;
+
+    const prefixes = pointHint === "start"
+        ? ["start", "origin", "source", "from", "pickup"]
+        : ["end", "destination", "target", "to", "drop"];
+
+    for (const prefix of prefixes) {
+        const lat =
+            toNumber(obj[`${prefix}Lat`]) ??
+            toNumber(obj[`${prefix}_lat`]) ??
+            toNumber(obj[`${prefix}Latitude`]) ??
+            toNumber(obj[`${prefix}_latitude`]);
+
+        const lng =
+            toNumber(obj[`${prefix}Lng`]) ??
+            toNumber(obj[`${prefix}_lng`]) ??
+            toNumber(obj[`${prefix}Lon`]) ??
+            toNumber(obj[`${prefix}_lon`]) ??
+            toNumber(obj[`${prefix}Longitude`]) ??
+            toNumber(obj[`${prefix}_longitude`]);
+
+        if (lat !== null && lng !== null && isValidCoordinate(lat, lng)) {
+            return { lat, lng };
+        }
+
+        const nestedCandidate =
+            parseRoutePoint(obj[prefix]) ??
+            parseRoutePoint(obj[`${prefix}Location`]) ??
+            parseRoutePoint(obj[`${prefix}_location`]) ??
+            parseRoutePoint(obj[`${prefix}Point`]) ??
+            parseRoutePoint(obj[`${prefix}_point`]);
+
+        if (nestedCandidate) return nestedCandidate;
+    }
+
+    return null;
+};
+
 export default function RouteManagementPage() {
     const { isLoaded, loadError } = useJsApiLoader({
         id: "google-map-script",
@@ -91,30 +167,39 @@ export default function RouteManagementPage() {
     };
 
     // ─── Load routes ───────────────────────────────────────────────────────
-    const normalizeRoute = (r: RouteType): RouteType => ({
-        ...r,
-        _id: r._id || (r as RouteType & { id?: string }).id || "",
-        startLat:
-            toNumber(r.startLat) ??
-            toNumber(r.startLocation?.lat) ??
-            toNumber((r.startLocation as unknown as { latitude?: number })?.latitude) ??
-            0,
-        startLng:
-            toNumber(r.startLng) ??
-            toNumber(r.startLocation?.lng) ??
-            toNumber((r.startLocation as unknown as { longitude?: number })?.longitude) ??
-            0,
-        endLat:
-            toNumber(r.endLat) ??
-            toNumber(r.endLocation?.lat) ??
-            toNumber((r.endLocation as unknown as { latitude?: number })?.latitude) ??
-            0,
-        endLng:
-            toNumber(r.endLng) ??
-            toNumber(r.endLocation?.lng) ??
-            toNumber((r.endLocation as unknown as { longitude?: number })?.longitude) ??
-            0,
-    });
+    const normalizeRoute = (r: RouteType): RouteType => {
+        const startFromNested = parseRoutePoint(r.startLocation);
+        const endFromNested = parseRoutePoint(r.endLocation);
+        const startFromHints = findRouteCoordinateByHints(r, "start");
+        const endFromHints = findRouteCoordinateByHints(r, "end");
+
+        const flatStartLat = toNumber(r.startLat);
+        const flatStartLng = toNumber(r.startLng);
+        const flatEndLat = toNumber(r.endLat);
+        const flatEndLng = toNumber(r.endLng);
+
+        const startFromFlat =
+            flatStartLat !== null && flatStartLng !== null && isValidCoordinate(flatStartLat, flatStartLng)
+                ? { lat: flatStartLat, lng: flatStartLng }
+                : null;
+
+        const endFromFlat =
+            flatEndLat !== null && flatEndLng !== null && isValidCoordinate(flatEndLat, flatEndLng)
+                ? { lat: flatEndLat, lng: flatEndLng }
+                : null;
+
+        const start = startFromNested ?? startFromFlat ?? startFromHints;
+        const end = endFromNested ?? endFromFlat ?? endFromHints;
+
+        return {
+            ...r,
+            _id: r._id || (r as RouteType & { id?: string }).id || "",
+            startLat: start?.lat ?? Number.NaN,
+            startLng: start?.lng ?? Number.NaN,
+            endLat: end?.lat ?? Number.NaN,
+            endLng: end?.lng ?? Number.NaN,
+        };
+    };
 
     const fetchRoutes = useCallback(async () => {
         try {
@@ -325,22 +410,38 @@ export default function RouteManagementPage() {
     const selectedRoute = routes.find((r) => r._id === selectedRouteId) ?? null;
     const selectedStops = useMemo(
         () => (selectedRouteId
-            ? [...(routeStops[selectedRouteId] ?? [])].sort((a, b) => a.sequenceOrder - b.sequenceOrder)
+            ? [...(routeStops[selectedRouteId] ?? [])].sort((a, b) => (a.sequenceOrder ?? 0) - (b.sequenceOrder ?? 0))
             : []),
         [selectedRouteId, routeStops]
     );
     const selectedRoutePath = useMemo(() => {
         if (!selectedRoute) return [] as { lat: number; lng: number }[];
+        const stopPoints = selectedStops
+            .map((stop) => ({ lat: stop.latitude, lng: stop.longitude }))
+            .filter((point) => isValidCoordinate(point.lat, point.lng));
+
+        const startPoint = isValidCoordinate(selectedRoute.startLat, selectedRoute.startLng)
+            ? { lat: selectedRoute.startLat, lng: selectedRoute.startLng }
+            : stopPoints[0] ?? null;
+
+        const endPoint = isValidCoordinate(selectedRoute.endLat, selectedRoute.endLng)
+            ? { lat: selectedRoute.endLat, lng: selectedRoute.endLng }
+            : stopPoints[stopPoints.length - 1] ?? null;
+
+        if (!startPoint || !endPoint) return [];
+
         const path: { lat: number; lng: number }[] = [
-            { lat: selectedRoute.startLat, lng: selectedRoute.startLng },
-            ...selectedStops.map((stop) => ({ lat: stop.latitude, lng: stop.longitude })),
-            { lat: selectedRoute.endLat, lng: selectedRoute.endLng },
+            startPoint,
+            ...stopPoints,
+            endPoint,
         ];
-        return path.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+        return path.filter((point) => isValidCoordinate(point.lat, point.lng));
     }, [selectedRoute, selectedStops]);
 
     useEffect(() => {
         if (!isLoaded || !mapRef || !selectedRoute) return;
+        if (!isValidCoordinate(selectedRoute.startLat, selectedRoute.startLng)) return;
+        if (!isValidCoordinate(selectedRoute.endLat, selectedRoute.endLng)) return;
 
         const bounds = new google.maps.LatLngBounds();
         bounds.extend({ lat: selectedRoute.startLat, lng: selectedRoute.startLng });
@@ -506,12 +607,16 @@ export default function RouteManagementPage() {
                                                 <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                                                     <span className="inline-flex items-center gap-1 text-[11px] text-green-700 bg-green-50 border border-green-100 px-2 py-0.5 rounded-full">
                                                         <MapPin className="w-2.5 h-2.5" />
-                                                        {route.startLat.toFixed(3)}, {route.startLng.toFixed(3)}
+                                                        {isValidCoordinate(route.startLat, route.startLng)
+                                                            ? `${route.startLat.toFixed(3)}, ${route.startLng.toFixed(3)}`
+                                                            : "Not set"}
                                                     </span>
                                                     <span className="text-gray-300">→</span>
                                                     <span className="inline-flex items-center gap-1 text-[11px] text-red-700 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">
                                                         <Navigation className="w-2.5 h-2.5" />
-                                                        {route.endLat.toFixed(3)}, {route.endLng.toFixed(3)}
+                                                        {isValidCoordinate(route.endLat, route.endLng)
+                                                            ? `${route.endLat.toFixed(3)}, ${route.endLng.toFixed(3)}`
+                                                            : "Not set"}
                                                     </span>
                                                 </div>
                                             </div>
@@ -668,34 +773,38 @@ export default function RouteManagementPage() {
                                 />
                             )}
                             {routes.map((r) => (
-                                <MarkerF
-                                    key={`${r._id}-s`}
-                                    position={{ lat: r.startLat, lng: r.startLng }}
-                                    title={`${r.name} — Start`}
-                                    icon={{
-                                        path: google.maps.SymbolPath.CIRCLE,
-                                        scale: 7,
-                                        fillColor: "#16a34a",
-                                        fillOpacity: 0.55,
-                                        strokeColor: "#fff",
-                                        strokeWeight: 1.5,
-                                    }}
-                                />
+                                isValidCoordinate(r.startLat, r.startLng) ? (
+                                    <MarkerF
+                                        key={`${r._id}-s`}
+                                        position={{ lat: r.startLat, lng: r.startLng }}
+                                        title={`${r.name} — Start`}
+                                        icon={{
+                                            path: google.maps.SymbolPath.CIRCLE,
+                                            scale: 7,
+                                            fillColor: "#16a34a",
+                                            fillOpacity: 0.55,
+                                            strokeColor: "#fff",
+                                            strokeWeight: 1.5,
+                                        }}
+                                    />
+                                ) : null
                             ))}
                             {routes.map((r) => (
-                                <MarkerF
-                                    key={`${r._id}-e`}
-                                    position={{ lat: r.endLat, lng: r.endLng }}
-                                    title={`${r.name} — End`}
-                                    icon={{
-                                        path: google.maps.SymbolPath.CIRCLE,
-                                        scale: 7,
-                                        fillColor: "#dc2626",
-                                        fillOpacity: 0.55,
-                                        strokeColor: "#fff",
-                                        strokeWeight: 1.5,
-                                    }}
-                                />
+                                isValidCoordinate(r.endLat, r.endLng) ? (
+                                    <MarkerF
+                                        key={`${r._id}-e`}
+                                        position={{ lat: r.endLat, lng: r.endLng }}
+                                        title={`${r.name} — End`}
+                                        icon={{
+                                            path: google.maps.SymbolPath.CIRCLE,
+                                            scale: 7,
+                                            fillColor: "#dc2626",
+                                            fillOpacity: 0.55,
+                                            strokeColor: "#fff",
+                                            strokeWeight: 1.5,
+                                        }}
+                                    />
+                                ) : null
                             ))}
                             {/* Stop markers for selected route */}
                             {selectedRouteId && (routeStops[selectedRouteId] ?? []).map((stop) => (

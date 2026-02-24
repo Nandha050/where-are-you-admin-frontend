@@ -1,5 +1,6 @@
 "use client";
 
+import { useSidebar } from "@/components/layout/sidebar-context";
 import { Header } from "@/components/layout/header";
 import { StatsCard } from "@/components/dashboards/stats-card";
 import { FleetMap } from "@/components/dashboards/fleet-map";
@@ -48,9 +49,11 @@ const statsData = [
 ];
 
 export default function DashboardPage() {
+    const { toggle } = useSidebar();
+
     return (
         <div className="flex flex-col h-full overflow-hidden">
-            <Header />
+            <Header onToggleSidebar={toggle} />
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
                 {/* Page Title */}
                 <div>
