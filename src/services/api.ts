@@ -83,6 +83,8 @@ export interface LatLng {
 
 export interface RoutePayload {
     name: string;
+    startName?: string;
+    endName?: string;
     startLat: number;
     startLng: number;
     endLat: number;
@@ -114,12 +116,16 @@ export interface RouteDetailResponse {
     routeId: string;
     polyline: string;
     stops: RouteDetailStop[];
+    startName?: string;
+    endName?: string;
 }
 
 export interface Route {
     _id: string;
     name: string;
     description?: string;
+    startName?: string;
+    endName?: string;
     // Flat fields (used in create payload and may be in response)
     startLat: number;
     startLng: number;
@@ -163,6 +169,8 @@ export const getRouteById = async (routeId: string) => {
 };
 export const createRoute = (data: RoutePayload) =>
     api.post<Route | { route: Route } | { data: Route }>("/api/admin/routes", data);
+export const updateRoute = (routeId: string, data: Partial<RoutePayload>) =>
+    api.put<Route | { route: Route } | { data: Route }>(`/api/admin/routes/${routeId}`, data);
 export const deleteRoute = (id: string) =>
     api.delete(`/api/admin/routes/${id}`);
 export const createStop = (routeId: string, data: { name: string; latitude: number; longitude: number; sequenceOrder?: number; radiusMeters?: number }) =>

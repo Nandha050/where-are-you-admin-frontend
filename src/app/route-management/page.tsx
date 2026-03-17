@@ -31,6 +31,7 @@ import {
     LatLng,
     RouteDetailResponse,
 } from "@/services/api";
+import { updateRoute } from "@/services/api";
 
 const MAP_CONTAINER_STYLE = { width: "100%", height: "100%" };
 const DEFAULT_CENTER = { lat: 17.385, lng: 78.4867 }; // Hyderabad, India
@@ -150,6 +151,8 @@ export default function RouteManagementPage() {
 
     const [routeName, setRouteName] = useState("");
     const [routeDescription, setRouteDescription] = useState("");
+    const [startName, setStartName] = useState("");
+    const [endName, setEndName] = useState("");
     const [startLocation, setStartLocation] = useState<LatLng | null>(null);
     const [endLocation, setEndLocation] = useState<LatLng | null>(null);
     const [markerMode, setMarkerMode] = useState<MarkerMode>(null);
@@ -169,6 +172,11 @@ export default function RouteManagementPage() {
     const [mapRef, setMapRef] = useState<google.maps.Map | null>(null);
     const [routePathSource, setRoutePathSource] = useState<RoutePathSource>("none");
     const [routePathIssue, setRoutePathIssue] = useState("");
+    const [detailNames, setDetailNames] = useState<{ start?: string; end?: string }>({});
+
+    const [editStartName, setEditStartName] = useState("");
+    const [editEndName, setEditEndName] = useState("");
+    const [updatingRoute, setUpdatingRoute] = useState(false);
     const routePolyline = useRef<google.maps.Polyline[]>([]);
     const stopMarkers = useRef<google.maps.Marker[]>([]);
 
@@ -284,10 +292,22 @@ export default function RouteManagementPage() {
             })
             .filter((stop): stop is NonNullable<typeof stop> => Boolean(stop));
 
+        const startName =
+            (detail as { start?: { name?: string } }).start?.name ||
+            (detail as { origin?: { name?: string } }).origin?.name ||
+            (detail as { from?: { name?: string } }).from?.name;
+
+        const endName =
+            (detail as { destination?: { name?: string } }).destination?.name ||
+            (detail as { end?: { name?: string } }).end?.name ||
+            (detail as { to?: { name?: string } }).to?.name;
+
         return {
             routeId: String(detail.routeId ?? detail._id ?? detail.id ?? routeId),
             polyline: encodedPolyline,
             stops: normalizedStops,
+            startName: startName || undefined,
+            endName: endName || undefined,
         };
     }, []);
 
@@ -489,6 +509,7 @@ export default function RouteManagementPage() {
 
             const renderResult = renderSelectedRouteOnMap(detail);
             const source = renderResult.source;
+            setDetailNames({ start: detail.startName ?? undefined, end: detail.endName ?? undefined });
 
             if (source === "api") {
                 setRoutePathIssue(`Using API polyline from ${endpointUsed}.`);
@@ -521,6 +542,7 @@ export default function RouteManagementPage() {
             }
         } catch (err: unknown) {
             clearRouteOverlays();
+            setDetailNames({});
             const msg =
                 (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
                 (err as Error)?.message ??
@@ -531,6 +553,16 @@ export default function RouteManagementPage() {
 
     // ─── Load routes ───────────────────────────────────────────────────────
     const normalizeRoute = (r: RouteType): RouteType => {
+        const normalizedStartName = (r as RouteType & { start_name?: string; start?: { name?: string } }).startName
+            ?? (r as { start_name?: string }).start_name
+            ?? (r as { start?: { name?: string } }).start?.name
+            ?? "";
+        const normalizedEndName = (r as RouteType & { end_name?: string; destination?: { name?: string }; end?: { name?: string } }).endName
+            ?? (r as { end_name?: string }).end_name
+            ?? (r as { destination?: { name?: string } }).destination?.name
+            ?? (r as { end?: { name?: string } }).end?.name
+            ?? "";
+
         const startFromNested = parseRoutePoint(r.startLocation);
         const endFromNested = parseRoutePoint(r.endLocation);
         const startFromHints = findRouteCoordinateByHints(r, "start");
@@ -557,6 +589,8 @@ export default function RouteManagementPage() {
         return {
             ...r,
             _id: r._id || (r as RouteType & { id?: string }).id || "",
+            startName: normalizedStartName || undefined,
+            endName: normalizedEndName || undefined,
             startLat: start?.lat ?? Number.NaN,
             startLng: start?.lng ?? Number.NaN,
             endLat: end?.lat ?? Number.NaN,
@@ -643,6 +677,8 @@ export default function RouteManagementPage() {
         const payload = {
             name: routeName.trim(),
             description: routeDescription.trim() || undefined,
+            startName: startName.trim() || undefined,
+            endName: endName.trim() || undefined,
             startLat: startLocation.lat,
             startLng: startLocation.lng,
             endLat: endLocation.lat,
@@ -661,6 +697,8 @@ export default function RouteManagementPage() {
             setRoutes((prev) => [created, ...prev]);
             setRouteName("");
             setRouteDescription("");
+            setStartName("");
+            setEndName("");
             setStartLocation(null);
             setEndLocation(null);
             setDirections(null);
@@ -702,6 +740,36 @@ export default function RouteManagementPage() {
             console.error("deleteRoute error:", err);
         } finally {
             setDeletingId(null);
+        }
+    };
+
+    const handleUpdateRouteNames = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedRouteId) return;
+
+        const payload = {
+            startName: editStartName.trim() || undefined,
+            endName: editEndName.trim() || undefined,
+        };
+
+        try {
+            setUpdatingRoute(true);
+            const { data: raw } = await updateRoute(selectedRouteId, payload);
+            const rawRoute = (raw as { route?: RouteType; data?: RouteType }).route
+                ?? (raw as { data?: RouteType }).data
+                ?? (raw as RouteType);
+            const updated = normalizeRoute(rawRoute);
+            setRoutes((prev) => prev.map((r) => (r._id === selectedRouteId ? { ...r, ...updated } : r)));
+            setDetailNames((prev) => ({ start: updated.startName ?? prev.start, end: updated.endName ?? prev.end }));
+            showToast("success", "Route updated");
+        } catch (err: unknown) {
+            const msg =
+                (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+                (err as Error)?.message ??
+                "Failed to update route.";
+            showToast("error", msg);
+        } finally {
+            setUpdatingRoute(false);
         }
     };
 
@@ -781,9 +849,27 @@ export default function RouteManagementPage() {
     );
 
     useEffect(() => {
+        if (selectedRoute) {
+            setEditStartName(selectedRoute.startName ?? "");
+            setEditEndName(selectedRoute.endName ?? "");
+            setDetailNames((prev) => ({
+                start: prev.start ?? selectedRoute.startName,
+                end: prev.end ?? selectedRoute.endName,
+            }));
+        } else {
+            setEditStartName("");
+            setEditEndName("");
+            setDetailNames({});
+        }
+    }, [selectedRoute]);
+
+    useEffect(() => {
         if (!selectedRouteId || !isLoaded || !mapRef) return;
         void fetchAndRenderSelectedRoute(selectedRouteId);
     }, [fetchAndRenderSelectedRoute, isLoaded, mapRef, selectedRouteId]);
+
+    const activeStartName = detailNames.start ?? selectedRoute?.startName;
+    const activeEndName = detailNames.end ?? selectedRoute?.endName;
 
     return (
         <div className="flex flex-col h-full overflow-hidden">
@@ -830,6 +916,23 @@ export default function RouteManagementPage() {
                                 onChange={(e) => setRouteDescription(e.target.value)}
                                 className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                             />
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <input
+                                    type="text"
+                                    placeholder="Start name (e.g. Sangareddy Depot)"
+                                    value={startName}
+                                    onChange={(e) => setStartName(e.target.value)}
+                                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                />
+                                <input
+                                    type="text"
+                                    placeholder="End name (e.g. IIT Main Gate)"
+                                    value={endName}
+                                    onChange={(e) => setEndName(e.target.value)}
+                                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                />
+                            </div>
 
                             <div className="grid grid-cols-2 gap-2">
                                 <button
@@ -891,6 +994,45 @@ export default function RouteManagementPage() {
                         </form>
                     </div>
 
+                    {selectedRoute && (
+                        <div className="p-4 border-b border-gray-100 bg-blue-50/60">
+                            <div className="flex items-start justify-between gap-3 mb-3">
+                                <div>
+                                    <p className="text-sm font-semibold text-gray-900">Edit Route Names</p>
+                                    <p className="text-xs text-gray-600">Set friendly start/end names for maps and drivers.</p>
+                                </div>
+                                <span className="text-xs font-semibold px-2 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-200">{selectedRoute.name}</span>
+                            </div>
+                            <form onSubmit={handleUpdateRouteNames} className="space-y-2">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="Start name"
+                                        value={editStartName}
+                                        onChange={(e) => setEditStartName(e.target.value)}
+                                        className="w-full px-3 py-2 bg-white border border-blue-100 rounded-lg text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                    />
+                                    <input
+                                        type="text"
+                                        placeholder="End name"
+                                        value={editEndName}
+                                        onChange={(e) => setEditEndName(e.target.value)}
+                                        className="w-full px-3 py-2 bg-white border border-blue-100 rounded-lg text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                    />
+                                </div>
+                                <div className="flex items-center justify-end gap-2">
+                                    <button
+                                        type="submit"
+                                        disabled={updatingRoute}
+                                        className="px-3 py-2 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60 disabled:cursor-not-allowed"
+                                    >
+                                        {updatingRoute ? "Saving..." : "Save Names"}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    )}
+
                     {/* Routes list */}
                     <div className="flex-1 p-5">
                         <h2 className="text-base font-semibold text-gray-900 mb-3">
@@ -950,6 +1092,11 @@ export default function RouteManagementPage() {
                                                             : "Not set"}
                                                     </span>
                                                 </div>
+                                                {(route.startName || route.endName) && (
+                                                    <p className="text-[11px] text-gray-600 mt-1">
+                                                        {(route.startName ?? "Start").trim() || "Start"} → {(route.endName ?? "End").trim() || "End"}
+                                                    </p>
+                                                )}
                                             </div>
                                             <div className="flex items-center gap-1 shrink-0">
                                                 <span
@@ -1001,6 +1148,11 @@ export default function RouteManagementPage() {
                         </button>
                         {selectedRouteId && (
                             <div className="absolute top-4 left-4 z-10 px-2.5 py-1 text-xs font-semibold rounded-lg border bg-white/95 max-w-[70%]">
+                                {(activeStartName || activeEndName) && (
+                                    <p className="text-[11px] font-semibold text-gray-800 mb-1">
+                                        {(activeStartName ?? "Start").trim() || "Start"} → {(activeEndName ?? "End").trim() || "End"}
+                                    </p>
+                                )}
                                 {routePathSource === "api" && (
                                     <span className="text-green-700 border border-green-200 bg-green-50 px-2 py-1 rounded-md">Polyline source: API</span>
                                 )}
