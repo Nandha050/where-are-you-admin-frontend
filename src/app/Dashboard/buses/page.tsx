@@ -7,6 +7,7 @@ import { AddBusDialog } from "@/components/buses/add-bus-dialog"
 import { AssignDriverDialog } from "@/components/buses/assign-driver-dialog"
 import { BusTable, type Bus } from "@/components/buses/bus-table"
 import { DeleteBusDialog } from "@/components/buses/delete-bus-dialog"
+import { ViewBusDialog } from "@/components/buses/view-bus-dialog"
 import { Header } from "@/components/layout/header"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -31,6 +32,11 @@ import {
   type Route,
   type Driver
 } from "@/services/api"
+import {
+  getStatusSortOrder,
+  matchesStatusFilter,
+  normalizeBusStatuses,
+} from "@/lib/bus-status"
 
 interface Toast {
   type: "success" | "error"
@@ -38,12 +44,19 @@ interface Toast {
 }
 
 interface BusWithDriverName extends Bus {
+  id?: string
   driverName?: string
+  currentLat?: number
+  currentLng?: number
   createdAt?: string
   updatedAt?: string
 }
 
 const ROUTE_CACHE_KEY = "busRouteCache"
+
+interface FetchAllDataOptions {
+  silent?: boolean
+}
 
 const loadRouteCache = (): Record<string, string> => {
   if (typeof window === "undefined") return {}
@@ -120,18 +133,25 @@ export default function BusesPage() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [isAssignDriverDialogOpen, setIsAssignDriverDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [isViewDialogOpen, setIsViewDialogOpen] = useState(false)
   const [isRouteDialogOpen, setIsRouteDialogOpen] = useState(false)
   const [selectedRouteName, setSelectedRouteName] = useState<string>("")
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
 
   const [routeFilter, setRouteFilter] = useState("All Routes")
-  const [statusFilter, setStatusFilter] = useState("All Status")
+  const [searchQuery, setSearchQuery] = useState("")
+  const [fleetStatusFilter, setFleetStatusFilter] = useState("ALL")
+  const [tripStatusFilter, setTripStatusFilter] = useState("ALL")
+  const [trackingStatusFilter, setTrackingStatusFilter] = useState("ALL")
+  const [sortBy, setSortBy] = useState("NUMBER_PLATE_ASC")
 
   const [selectedBus, setSelectedBus] = useState<BusWithDriverName | null>(null)
 
   // Fetch initial data
-  const fetchAllData = useCallback(async () => {
-    setLoading(true)
+  const fetchAllData = useCallback(async ({ silent = false }: FetchAllDataOptions = {}) => {
+    if (!silent) {
+      setLoading(true)
+    }
     setError(null)
 
     try {
@@ -149,7 +169,9 @@ export default function BusesPage() {
       if (busesRes.status === "fulfilled") {
         busesData = extractList<BusResponse>(busesRes.value.data, ["buses", "data"])
       } else {
-        showToast("error", getErrorMessage(busesRes.reason, "Failed to fetch buses."))
+        if (!silent) {
+          showToast("error", getErrorMessage(busesRes.reason, "Failed to fetch buses."))
+        }
       }
 
       if (routesRes.status === "fulfilled") {
@@ -161,7 +183,9 @@ export default function BusesPage() {
         driversData = extractList<Driver>(driversRes.value.data, ["drivers", "data"])
       } else {
         // Drivers are optional for showing buses; degrade gracefully
-        showToast("error", "Drivers unavailable (404). You can still view buses.")
+        if (!silent) {
+          showToast("error", "Drivers unavailable (404). You can still view buses.")
+        }
         driversData = []
       }
 
@@ -274,16 +298,31 @@ export default function BusesPage() {
 
       setBuses(busesWithDriverNames)
       setDrivers(driversWithAssignment)
+      setSelectedBus((current) => {
+        if (!current) return current
+
+        const currentKey = String(current._id || current.id || current.numberPlate)
+        const latest = busesWithDriverNames.find((bus) => {
+          const key = String(bus._id || bus.id || bus.numberPlate)
+          return key === currentKey
+        })
+
+        return latest ? { ...current, ...latest } : current
+      })
     } catch (err) {
       console.error("Failed to fetch data:", err)
-      showToast("error", getErrorMessage(err, "Failed to fetch buses. Please try again."))
+      if (!silent) {
+        showToast("error", getErrorMessage(err, "Failed to fetch buses. Please try again."))
+      }
     } finally {
-      setLoading(false)
+      if (!silent) {
+        setLoading(false)
+      }
     }
   }, [])
 
   useEffect(() => {
-    fetchAllData()
+    void fetchAllData()
   }, [fetchAllData])
 
   const showSuccess = (message: string) => {
@@ -301,13 +340,67 @@ export default function BusesPage() {
     setTimeout(() => setToast(null), 3500)
   }
 
+  const busesWithCanonicalStatus = useMemo(() => {
+    return buses.map((bus) => {
+      const normalized = normalizeBusStatuses(bus)
+      return {
+        ...bus,
+        fleetStatus: normalized.fleetStatus,
+        tripStatus: normalized.tripStatus,
+        trackingStatus: normalized.trackingStatus,
+      }
+    })
+  }, [buses])
+
   const filteredBuses = useMemo(() => {
-    return buses.filter((bus) => {
+    const query = searchQuery.trim().toLowerCase()
+
+    const list = busesWithCanonicalStatus.filter((bus) => {
       const routeMatches = routeFilter === "All Routes" || bus.routeName === routeFilter
-      const statusMatches = statusFilter === "All Status" || bus.status === statusFilter
-      return routeMatches && statusMatches
-    }).sort((a, b) => a.numberPlate.localeCompare(b.numberPlate))
-  }, [buses, routeFilter, statusFilter])
+      const fleetMatches = matchesStatusFilter(bus.fleetStatus, fleetStatusFilter)
+      const tripMatches = matchesStatusFilter(bus.tripStatus, tripStatusFilter)
+      const trackingMatches = matchesStatusFilter(bus.trackingStatus, trackingStatusFilter)
+
+      const searchMatches =
+        query.length === 0 ||
+        [bus.numberPlate, bus.routeName, bus.driverName, bus.driverId]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(query))
+
+      return routeMatches && fleetMatches && tripMatches && trackingMatches && searchMatches
+    })
+
+    return list.sort((left, right) => {
+      if (sortBy === "NUMBER_PLATE_DESC") {
+        return right.numberPlate.localeCompare(left.numberPlate)
+      }
+
+      if (sortBy === "FLEET_STATUS") {
+        const diff = getStatusSortOrder("fleet", left.fleetStatus) - getStatusSortOrder("fleet", right.fleetStatus)
+        return diff !== 0 ? diff : left.numberPlate.localeCompare(right.numberPlate)
+      }
+
+      if (sortBy === "TRIP_STATUS") {
+        const diff = getStatusSortOrder("trip", left.tripStatus) - getStatusSortOrder("trip", right.tripStatus)
+        return diff !== 0 ? diff : left.numberPlate.localeCompare(right.numberPlate)
+      }
+
+      if (sortBy === "TRACKING_STATUS") {
+        const diff = getStatusSortOrder("tracking", left.trackingStatus) - getStatusSortOrder("tracking", right.trackingStatus)
+        return diff !== 0 ? diff : left.numberPlate.localeCompare(right.numberPlate)
+      }
+
+      return left.numberPlate.localeCompare(right.numberPlate)
+    })
+  }, [
+    busesWithCanonicalStatus,
+    routeFilter,
+    searchQuery,
+    fleetStatusFilter,
+    tripStatusFilter,
+    trackingStatusFilter,
+    sortBy,
+  ])
 
   const handleAddBus = useCallback(async (numberPlate: string, routeName: string) => {
     try {
@@ -453,8 +546,11 @@ export default function BusesPage() {
     try {
       const busId = bus._id || bus.id || ""
       const response = await getBusById(busId)
-      setSelectedBus(response.data.bus as BusWithDriverName)
-      showToast("success", "Bus details loaded")
+      setSelectedBus({
+        ...bus,
+        ...(response.data.bus as BusWithDriverName),
+      })
+      setIsViewDialogOpen(true)
     } catch (err: unknown) {
       showToast("error", getErrorMessage(err, "Failed to fetch bus details"))
     }
@@ -536,18 +632,37 @@ export default function BusesPage() {
               _id: b._id,
               numberPlate: b.numberPlate,
               routeName: b.routeName,
+              routeId: b.routeId,
+              fleetStatus: b.fleetStatus,
+              tripStatus: b.tripStatus,
               status: b.status,
               trackingStatus: b.trackingStatus,
               driverName: b.driverName,
+              driverId: b.driverId,
+              currentLat: b.currentLat,
+              currentLng: b.currentLng,
+              speed: b.speed,
             }))}
             routes={uniqueRoutes}
+            searchQuery={searchQuery}
             routeFilter={routeFilter}
-            statusFilter={statusFilter}
+            fleetStatusFilter={fleetStatusFilter}
+            tripStatusFilter={tripStatusFilter}
+            trackingStatusFilter={trackingStatusFilter}
+            sortBy={sortBy}
+            onSearchQueryChange={setSearchQuery}
             onRouteFilterChange={setRouteFilter}
-            onStatusFilterChange={setStatusFilter}
+            onFleetStatusFilterChange={setFleetStatusFilter}
+            onTripStatusFilterChange={setTripStatusFilter}
+            onTrackingStatusFilterChange={setTrackingStatusFilter}
+            onSortByChange={setSortBy}
             onClearFilters={() => {
+              setSearchQuery("")
               setRouteFilter("All Routes")
-              setStatusFilter("All Status")
+              setFleetStatusFilter("ALL")
+              setTripStatusFilter("ALL")
+              setTrackingStatusFilter("ALL")
+              setSortBy("NUMBER_PLATE_ASC")
             }}
             onAssignDriver={(bus, idx) => {
               const matchIndex = buses.findIndex(b =>
@@ -639,7 +754,11 @@ export default function BusesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ViewBusDialog removed due to missing module */}
+      <ViewBusDialog
+        open={isViewDialogOpen}
+        onOpenChange={setIsViewDialogOpen}
+        bus={selectedBus ?? undefined}
+      />
 
       <DeleteBusDialog
         open={isDeleteDialogOpen}

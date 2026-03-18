@@ -59,12 +59,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const login = useCallback(async (payload: LoginPayload) => {
         const { data } = await adminLogin(payload);
-        persist(data.token, data.admin ?? null);
+        // Backend returns 'accessToken', frontend stores as 'token'
+        const token = (data as any).accessToken || data.token;
+        persist(token, data.admin ?? null);
     }, []);
 
     const signup = useCallback(async (payload: SignupPayload) => {
         const { data } = await adminSignup(payload);
-        persist(data.token, data.admin ?? null);
+        // Backend returns 'accessToken', frontend stores as 'token'
+        const token = (data as any).accessToken || data.token;
+        persist(token, data.admin ?? null);
     }, []);
 
     const logout = useCallback(() => {

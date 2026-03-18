@@ -177,7 +177,7 @@ export default function DriversPage() {
     return map;
   }, [buses]);
 
-  const activeDrivers = drivers.filter((d) => {
+  const assignedDrivers = drivers.filter((d) => {
     const ids = [d.memberId, d._id, d.id].filter(Boolean) as Array<string | number>;
     return ids.some((id) => assignedBusByDriverId.has(String(id)));
   }).length;
@@ -248,12 +248,12 @@ export default function DriversPage() {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Card className="p-4">
-            <p className="text-xs text-gray-500">Active Drivers</p>
-            <p className="text-2xl font-semibold text-gray-900">{activeDrivers}</p>
+            <p className="text-xs text-gray-500">Assigned Drivers</p>
+            <p className="text-2xl font-semibold text-gray-900">{assignedDrivers}</p>
           </Card>
           <Card className="p-4">
-            <p className="text-xs text-gray-500">Unassigned</p>
-            <p className="text-2xl font-semibold text-gray-900">{drivers.length - activeDrivers}</p>
+            <p className="text-xs text-gray-500">Unassigned Drivers</p>
+            <p className="text-2xl font-semibold text-gray-900">{drivers.length - assignedDrivers}</p>
           </Card>
           <Card className="p-4">
             <p className="text-xs text-gray-500">Total</p>
@@ -276,7 +276,7 @@ export default function DriversPage() {
                   <TableHead className="text-xs uppercase tracking-wide text-gray-500">Name</TableHead>
                   <TableHead className="text-xs uppercase tracking-wide text-gray-500">Member ID</TableHead>
                   <TableHead className="text-xs uppercase tracking-wide text-gray-500">Assigned Bus</TableHead>
-                  <TableHead className="text-xs uppercase tracking-wide text-gray-500">Status</TableHead>
+                  <TableHead className="text-xs uppercase tracking-wide text-gray-500">Assignment Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -305,7 +305,7 @@ export default function DriversPage() {
                         </TableCell>
                         <TableCell>
                           <Badge className={`rounded-full border-0 ${assignedBus ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"}`}>
-                            {assignedBus ? "Active" : "Offline"}
+                            {assignedBus ? "Assigned" : "Unassigned"}
                           </Badge>
                         </TableCell>
                       </TableRow>

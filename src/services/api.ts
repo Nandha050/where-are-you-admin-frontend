@@ -183,10 +183,21 @@ export interface Bus {
     routeName?: string;
     routeId?: string;
     driverId?: string;
+    fleetStatus?: "IN_SERVICE" | "OUT_OF_SERVICE" | "MAINTENANCE";
+    tripStatus?:
+    | "NOT_SCHEDULED"
+    | "TRIP_NOT_STARTED"
+    | "ON_TRIP"
+    | "COMPLETED"
+    | "DELAYED"
+    | "CANCELLED"
+    | "MAINTENANCE_HOLD";
+    trackingStatus?: "RUNNING" | "IDLE" | "OFFLINE" | "NO_SIGNAL" | "online" | "offline" | "idle" | "moving";
+    // Deprecated: use fleetStatus instead. Kept temporarily for backward compatibility.
     status?: "active" | "inactive";
-    trackingStatus?: string;
     currentLat?: number;
     currentLng?: number;
+    speed?: number;
     createdAt?: string;
     updatedAt?: string;
 }
@@ -210,10 +221,21 @@ export interface BusResponse {
     routeName?: string;
     routeId?: string;
     driverId?: string;
+    fleetStatus?: "IN_SERVICE" | "OUT_OF_SERVICE" | "MAINTENANCE";
+    tripStatus?:
+    | "NOT_SCHEDULED"
+    | "TRIP_NOT_STARTED"
+    | "ON_TRIP"
+    | "COMPLETED"
+    | "DELAYED"
+    | "CANCELLED"
+    | "MAINTENANCE_HOLD";
+    trackingStatus?: "RUNNING" | "IDLE" | "OFFLINE" | "NO_SIGNAL" | "online" | "offline" | "idle" | "moving";
+    // Deprecated: use fleetStatus instead. Kept temporarily for backward compatibility.
     status: "active" | "inactive";
-    trackingStatus?: string;
     currentLat?: number;
     currentLng?: number;
+    speed?: number;
     createdAt: string;
     updatedAt: string;
 }
