@@ -139,6 +139,7 @@ const BusRow = memo(function BusRow({
   const fallbackTrackingMeta = getStatusMeta("tracking", bus.trackingStatus)
   const liveTrackingMeta = getLiveTrackingStatusMeta(live.statusLabel)
   const trackingMeta = live.lastUpdatedText !== "never" ? liveTrackingMeta : fallbackTrackingMeta
+  const isRouteChangeBlocked = bus.tripStatus === "ON_TRIP" || bus.tripStatus === "DELAYED"
   const hasStaleTracking = isStaleTrackingState(
     live.tripStatus ?? bus.tripStatus,
     live.trackingStatus ?? bus.trackingStatus
@@ -254,7 +255,11 @@ const BusRow = memo(function BusRow({
                 <Trash2 className="size-4" />
                 Delete Bus
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onChangeRoute(bus, idx)}>
+              <DropdownMenuItem
+                disabled={isRouteChangeBlocked}
+                onClick={() => onChangeRoute(bus, idx)}
+                title={isRouteChangeBlocked ? "Complete/cancel active trip before changing route" : "Change route"}
+              >
                 <ListFilter className="size-4" />
                 Change Route
               </DropdownMenuItem>

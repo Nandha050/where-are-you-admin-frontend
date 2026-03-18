@@ -9,6 +9,7 @@ import { BusTable, type Bus } from "@/components/buses/bus-table"
 import { DeleteBusDialog } from "@/components/buses/delete-bus-dialog"
 import { ViewBusDialog } from "@/components/buses/view-bus-dialog"
 import { Header } from "@/components/layout/header"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import {
@@ -24,6 +25,7 @@ import {
   createBus,
   updateBusDriver,
   updateBusRoute,
+  postBusTripEvent,
   deleteBus,
   getBusById,
   getRoutes,
@@ -33,13 +35,32 @@ import {
   type Driver
 } from "@/services/api"
 import {
+  getStatusMeta,
   getStatusSortOrder,
   matchesStatusFilter,
   normalizeBusStatuses,
 } from "@/lib/bus-status"
+import { useBusLiveTracking } from "@/realtime/hooks"
 
 interface Toast {
   type: "success" | "error"
+  message: string
+}
+
+type RouteChangeActionState = "idle" | "validating" | "blocked" | "submitting" | "success" | "failed"
+
+interface RouteChangeConflictMetadata {
+  isConflict: boolean
+  action?: string
+  message: string
+}
+
+const ROUTE_CONFLICT_ACTION = "complete_or_cancel_trip_then_retry"
+
+interface RouteChangeErrorInfo {
+  status?: number
+  action?: string
+  isConflict: boolean
   message: string
 }
 
@@ -115,9 +136,70 @@ const getErrorMessage = (err: unknown, fallback: string) => {
   if (err && typeof err === "object" && "response" in err) {
     const maybe = err as { response?: { data?: { message?: unknown } } }
     const msg = maybe.response?.data?.message
-    if (typeof msg === "string" && msg.trim()) return msg
+    if (typeof msg === "string" && msg.trim()) {
+      const normalized = msg.toLowerCase()
+      if (normalized.includes("invalid trip status transition") && normalized.includes("on_trip")) {
+        return "Cannot change route while bus is on an active trip. Complete or cancel the trip first."
+      }
+      return msg
+    }
   }
   return fallback
+}
+
+const mapRouteChangeError = (err: unknown, fallback: string): RouteChangeErrorInfo => {
+  const status = (err as { response?: { status?: number } })?.response?.status
+  const data = (err as { response?: { data?: { message?: unknown; action?: unknown } } })?.response?.data
+  const action = typeof data?.action === "string" ? data.action : undefined
+  const backendMessage = typeof data?.message === "string" ? data.message.toLowerCase() : ""
+
+  if (status === 409 && action === ROUTE_CONFLICT_ACTION) {
+    return {
+      status,
+      action,
+      isConflict: true,
+      message: "Trip is active. Complete or cancel it before changing route.",
+    }
+  }
+
+  if (status === 404 && backendMessage.includes("route")) {
+    return {
+      status,
+      action,
+      isConflict: false,
+      message: "Selected route does not exist. Refresh route list and try again.",
+    }
+  }
+
+  if (status === 404 && backendMessage.includes("bus")) {
+    return {
+      status,
+      action,
+      isConflict: false,
+      message: "Bus no longer exists. Refresh bus list.",
+    }
+  }
+
+  if (status === 401) {
+    return {
+      status,
+      action,
+      isConflict: false,
+      message: "Session expired. Please sign in again.",
+    }
+  }
+
+  return {
+    status,
+    action,
+    isConflict: false,
+    message: fallback,
+  }
+}
+
+const isRouteChangeBlockedByTripState = (bus: Pick<BusWithDriverName, "tripStatus">) => {
+  const normalized = bus.tripStatus ? String(bus.tripStatus).trim().toUpperCase().replace(/[\s-]+/g, "_") : ""
+  return normalized === "ON_TRIP" || normalized === "DELAYED"
 }
 
 export default function BusesPage() {
@@ -137,6 +219,10 @@ export default function BusesPage() {
   const [isRouteDialogOpen, setIsRouteDialogOpen] = useState(false)
   const [selectedRouteName, setSelectedRouteName] = useState<string>("")
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
+  const [routeChangeState, setRouteChangeState] = useState<RouteChangeActionState>("idle")
+  const [routeChangeConflict, setRouteChangeConflict] = useState<RouteChangeConflictMetadata | null>(null)
+  const [isRouteStatusSyncing, setIsRouteStatusSyncing] = useState(false)
+  const [tripEventSubmitting, setTripEventSubmitting] = useState<"trip_completed" | "trip_cancelled" | null>(null)
 
   const [routeFilter, setRouteFilter] = useState("All Routes")
   const [searchQuery, setSearchQuery] = useState("")
@@ -146,6 +232,9 @@ export default function BusesPage() {
   const [sortBy, setSortBy] = useState("NUMBER_PLATE_ASC")
 
   const [selectedBus, setSelectedBus] = useState<BusWithDriverName | null>(null)
+
+  const selectedBusId = selectedBus?._id || selectedBus?.id || ""
+  const selectedBusLive = useBusLiveTracking(selectedBusId, [selectedBus?._id, selectedBus?.id, selectedBus?.numberPlate])
 
   // Fetch initial data
   const fetchAllData = useCallback(async ({ silent = false }: FetchAllDataOptions = {}) => {
@@ -340,6 +429,129 @@ export default function BusesPage() {
     setTimeout(() => setToast(null), 3500)
   }
 
+  const syncSelectedBusSnapshot = useCallback(async (busId: string, options?: { silent?: boolean }) => {
+    if (!busId) return null
+
+    setIsRouteStatusSyncing(true)
+    try {
+      const response = await getBusById(busId)
+      const freshBus = response.data.bus as BusWithDriverName
+
+      setBuses((prev) =>
+        prev.map((bus, idx) => {
+          const idMatch = bus._id && freshBus._id && bus._id === freshBus._id
+          const fallbackIdMatch = bus.id && freshBus.id && bus.id === freshBus.id
+          const idxMatch = selectedIndex !== null && idx === selectedIndex
+
+          if (!(idMatch || fallbackIdMatch || idxMatch)) return bus
+
+          return {
+            ...bus,
+            ...freshBus,
+            driverName: freshBus.driverName ?? bus.driverName,
+          }
+        })
+      )
+
+      setSelectedBus((current) => {
+        if (!current) return current
+
+        const sameBus =
+          (current._id && freshBus._id && current._id === freshBus._id) ||
+          (current.id && freshBus.id && current.id === freshBus.id) ||
+          current.numberPlate === freshBus.numberPlate
+
+        if (!sameBus) return current
+
+        return {
+          ...current,
+          ...freshBus,
+          driverName: freshBus.driverName ?? current.driverName,
+        }
+      })
+
+      return freshBus
+    } catch (err: unknown) {
+      if (!options?.silent) {
+        const mapped = mapRouteChangeError(err, "Failed to refresh bus status.")
+        showToast("error", mapped.message)
+      }
+      console.error("[route-change] bus status refresh failed", err)
+      return null
+    } finally {
+      setIsRouteStatusSyncing(false)
+    }
+  }, [selectedIndex])
+
+  useEffect(() => {
+    if (!isRouteDialogOpen || !selectedBus) return
+    if (selectedBusLive.lastUpdatedText === "never") return
+
+    const liveTrackingStatus = selectedBusLive.trackingStatus as BusWithDriverName["trackingStatus"] | undefined
+
+    setSelectedBus((current) => {
+      if (!current) return current
+
+      const sameBus =
+        (selectedBus._id && current._id && selectedBus._id === current._id) ||
+        (selectedBus.id && current.id && selectedBus.id === current.id) ||
+        selectedBus.numberPlate === current.numberPlate
+
+      if (!sameBus) return current
+
+      return {
+        ...current,
+        currentLat: selectedBusLive.location?.lat ?? current.currentLat,
+        currentLng: selectedBusLive.location?.lng ?? current.currentLng,
+        speed: typeof selectedBusLive.speed === "number" ? selectedBusLive.speed : current.speed,
+        trackingStatus: liveTrackingStatus ?? current.trackingStatus,
+      }
+    })
+  }, [isRouteDialogOpen, selectedBus, selectedBusLive.lastUpdatedText, selectedBusLive.location?.lat, selectedBusLive.location?.lng, selectedBusLive.speed, selectedBusLive.trackingStatus])
+
+  useEffect(() => {
+    if (!isRouteDialogOpen || !selectedBusId) return
+    if (selectedBusLive.isConnected) return
+
+    void syncSelectedBusSnapshot(selectedBusId, { silent: true })
+
+    const pollId = window.setInterval(() => {
+      void syncSelectedBusSnapshot(selectedBusId, { silent: true })
+    }, 20000)
+
+    return () => {
+      window.clearInterval(pollId)
+    }
+  }, [isRouteDialogOpen, selectedBusId, selectedBusLive.isConnected, syncSelectedBusSnapshot])
+
+  useEffect(() => {
+    if (!isRouteDialogOpen || !selectedBusId) return
+
+    let cancelled = false
+    setRouteChangeState("validating")
+    setRouteChangeConflict(null)
+
+    void syncSelectedBusSnapshot(selectedBusId, { silent: true }).then((freshBus) => {
+      if (cancelled || !freshBus) return
+
+      if (isRouteChangeBlockedByTripState(freshBus)) {
+        setRouteChangeState("blocked")
+        setRouteChangeConflict({
+          isConflict: true,
+          action: ROUTE_CONFLICT_ACTION,
+          message: "Cannot change route while trip is active. Complete or cancel the trip first.",
+        })
+        return
+      }
+
+      setRouteChangeState("idle")
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isRouteDialogOpen, selectedBusId, syncSelectedBusSnapshot])
+
   const busesWithCanonicalStatus = useMemo(() => {
     return buses.map((bus) => {
       const normalized = normalizeBusStatuses(bus)
@@ -475,16 +687,88 @@ export default function BusesPage() {
     setSelectedBus(bus)
     setSelectedIndex(idx)
     setSelectedRouteName(bus.routeName || "")
+    setRouteChangeState("idle")
+    setRouteChangeConflict(null)
+    setTripEventSubmitting(null)
     setIsRouteDialogOpen(true)
   }, [])
 
+  const dismissRouteConflict = useCallback(() => {
+    setRouteChangeConflict(null)
+    setRouteChangeState("idle")
+  }, [])
+
+  const handleResolveRouteConflict = useCallback(async (eventType: "trip_completed" | "trip_cancelled") => {
+    if (!selectedBus) return
+
+    const busId = selectedBus._id || selectedBus.id || ""
+    if (!busId) return
+
+    setTripEventSubmitting(eventType)
+    setRouteChangeState("validating")
+
+    try {
+      await postBusTripEvent(busId, { eventType })
+      const refreshed = await syncSelectedBusSnapshot(busId)
+
+      if (!refreshed) {
+        setRouteChangeState("failed")
+        return
+      }
+
+      if (isRouteChangeBlockedByTripState(refreshed)) {
+        setRouteChangeState("blocked")
+        setRouteChangeConflict({
+          isConflict: true,
+          action: ROUTE_CONFLICT_ACTION,
+          message: "Trip is still active. Wait a moment and try again.",
+        })
+        return
+      }
+
+      setRouteChangeConflict(null)
+      setRouteChangeState("idle")
+      showToast("success", eventType === "trip_completed" ? "Trip completed. You can reassign route now." : "Trip cancelled. You can reassign route now.")
+    } catch (err: unknown) {
+      const mapped = mapRouteChangeError(err, "Failed to update trip status.")
+      setRouteChangeState("failed")
+      showToast("error", mapped.message)
+      console.error("[route-change] trip-event resolution failed", err)
+    } finally {
+      setTripEventSubmitting(null)
+    }
+  }, [selectedBus, syncSelectedBusSnapshot])
+
   const handleUpdateRoute = useCallback(async () => {
     if (!selectedBus) return
+
+    const busId = selectedBus._id || selectedBus.id || ""
+    if (!busId) return
+
+    setRouteChangeConflict(null)
+    setRouteChangeState("validating")
+
+    const latestBus = await syncSelectedBusSnapshot(busId)
+    if (!latestBus) {
+      setRouteChangeState("failed")
+      return
+    }
+
+    if (isRouteChangeBlockedByTripState(latestBus)) {
+      setRouteChangeState("blocked")
+      setRouteChangeConflict({
+        isConflict: true,
+        action: ROUTE_CONFLICT_ACTION,
+        message: "Cannot change route while trip is active. Complete or cancel the trip first.",
+      })
+      return
+    }
+
     try {
+      setRouteChangeState("submitting")
       setLoading(true)
-      const busId = selectedBus._id || selectedBus.id || ""
       const response = await updateBusRoute(busId, { routeName: selectedRouteName })
-      const updatedBus = response.data.bus
+      const updatedBus = response.data.bus as BusWithDriverName
       const cacheKey = String(selectedBus._id || selectedBus.id || selectedBus.numberPlate)
       saveRouteToCache(cacheKey, selectedRouteName)
 
@@ -496,16 +780,52 @@ export default function BusesPage() {
           : bus
       }))
 
+      await syncSelectedBusSnapshot(busId, { silent: true })
+
+      setRouteChangeState("success")
       setIsRouteDialogOpen(false)
       setSelectedBus(null)
       setSelectedIndex(null)
+      setRouteChangeConflict(null)
+      setTripEventSubmitting(null)
       showSuccess("Route updated")
     } catch (err: unknown) {
-      showError(getErrorMessage(err, "Failed to update route"))
+      const mapped = mapRouteChangeError(err, "Failed to update route.")
+      console.error("[route-change] update failed", err)
+
+      if (mapped.isConflict && mapped.action === ROUTE_CONFLICT_ACTION) {
+        setRouteChangeState("blocked")
+        setRouteChangeConflict({
+          isConflict: true,
+          action: mapped.action,
+          message: mapped.message,
+        })
+        return
+      }
+
+      if (mapped.status === 404 && mapped.message.includes("Selected route does not exist")) {
+        try {
+          const routesRes = await getRoutes()
+          const routesData = extractList<Route>(routesRes.data, ["routes", "data"])
+          setRoutes(routesData)
+        } catch (refreshErr) {
+          console.error("[route-change] route refresh failed", refreshErr)
+        }
+      }
+
+      if (mapped.status === 404 && mapped.message.includes("Bus no longer exists")) {
+        void fetchAllData({ silent: true })
+        setIsRouteDialogOpen(false)
+        setSelectedBus(null)
+        setSelectedIndex(null)
+      }
+
+      setRouteChangeState("failed")
+      showError(mapped.message)
     } finally {
       setLoading(false)
     }
-  }, [selectedBus, selectedRouteName, selectedIndex])
+  }, [fetchAllData, selectedBus, selectedRouteName, selectedIndex, syncSelectedBusSnapshot])
 
   const handleDeleteBus = useCallback(async () => {
     if (!selectedBus) return
@@ -560,6 +880,35 @@ export default function BusesPage() {
     const routeNames = new Set(buses.map(b => b.routeName).filter((r): r is string => !!r))
     return Array.from(routeNames)
   }, [buses])
+
+  const selectedFleetMeta = getStatusMeta("fleet", selectedBus?.fleetStatus ?? selectedBus?.status)
+  const selectedTripMeta = getStatusMeta("trip", selectedBus?.tripStatus)
+  const selectedTrackingMeta = getStatusMeta("tracking", selectedBus?.trackingStatus)
+
+  const isRouteBlockedByTrip = selectedBus ? isRouteChangeBlockedByTripState(selectedBus) : false
+  const isRouteActionLocked =
+    loading ||
+    isRouteStatusSyncing ||
+    routeChangeState === "validating" ||
+    routeChangeState === "submitting" ||
+    Boolean(tripEventSubmitting)
+  const hasRouteChanged = selectedRouteName !== (selectedBus?.routeName || "")
+  const canSubmitRouteChange =
+    Boolean(selectedBus && selectedRouteName) &&
+    hasRouteChanged &&
+    !isRouteActionLocked &&
+    !isRouteBlockedByTrip &&
+    !routeChangeConflict?.isConflict
+
+  const handleRouteDialogOpenChange = useCallback((nextOpen: boolean) => {
+    setIsRouteDialogOpen(nextOpen)
+    if (!nextOpen) {
+      setRouteChangeState("idle")
+      setRouteChangeConflict(null)
+      setTripEventSubmitting(null)
+      setIsRouteStatusSyncing(false)
+    }
+  }, [])
 
   return (
     <>
@@ -722,20 +1071,79 @@ export default function BusesPage() {
         selectedBus={selectedBus}
       />
 
-      <Dialog open={isRouteDialogOpen} onOpenChange={setIsRouteDialogOpen}>
+      <Dialog open={isRouteDialogOpen} onOpenChange={handleRouteDialogOpenChange}>
         <DialogContent className="sm:max-w-md rounded-xl">
           <DialogHeader>
             <DialogTitle>Change Route</DialogTitle>
             <DialogDescription>
-              Select a route to assign to this bus.
+              {selectedBus ? `Select a route to assign to ${selectedBus.numberPlate}.` : "Select a route to assign to this bus."}
             </DialogDescription>
           </DialogHeader>
+
+          {selectedBus && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
+              <div className="text-xs font-medium uppercase tracking-wide text-gray-500">Current Status</div>
+              <div className="flex flex-wrap gap-2">
+                <Badge className={`rounded-full border-0 ${selectedFleetMeta.badgeClassName}`}>
+                  Fleet: {selectedFleetMeta.label}
+                </Badge>
+                <Badge className={`rounded-full border-0 ${selectedTripMeta.badgeClassName}`}>
+                  Trip: {selectedTripMeta.label}
+                </Badge>
+                <Badge className={`rounded-full border-0 ${selectedTrackingMeta.badgeClassName}`}>
+                  Tracking: {selectedTrackingMeta.label}
+                </Badge>
+              </div>
+              <p className="text-xs text-gray-500">
+                {isRouteStatusSyncing || routeChangeState === "validating"
+                  ? "Syncing latest backend status..."
+                  : selectedBusLive.isConnected
+                    ? "Live tracking connected. Status validated with backend snapshot."
+                    : "Live tracking disconnected. Backend snapshot auto-refresh runs every 20 seconds."}
+              </p>
+            </div>
+          )}
+
+          {(isRouteBlockedByTrip || routeChangeState === "blocked") && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Cannot change route while trip is active. Complete or cancel the trip first.
+            </div>
+          )}
+
+          {routeChangeConflict?.isConflict && routeChangeConflict.action === ROUTE_CONFLICT_ACTION && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-3">
+              <p className="text-sm text-red-800">{routeChangeConflict.message}</p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  onClick={() => void handleResolveRouteConflict("trip_completed")}
+                  disabled={isRouteActionLocked}
+                  className="rounded-lg bg-emerald-600 hover:bg-emerald-700"
+                >
+                  {tripEventSubmitting === "trip_completed" ? "Completing..." : "Complete Trip"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => void handleResolveRouteConflict("trip_cancelled")}
+                  disabled={isRouteActionLocked}
+                  className="rounded-lg"
+                >
+                  {tripEventSubmitting === "trip_cancelled" ? "Cancelling..." : "Cancel Trip"}
+                </Button>
+                <Button type="button" variant="outline" onClick={dismissRouteConflict} disabled={isRouteActionLocked} className="rounded-lg">
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-3">
             <label className="text-sm font-medium text-gray-700">Route</label>
             <select
               value={selectedRouteName}
               onChange={(e) => setSelectedRouteName(e.target.value)}
+              disabled={isRouteActionLocked}
               className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">None</option>
@@ -746,9 +1154,13 @@ export default function BusesPage() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsRouteDialogOpen(false)} className="rounded-lg">Cancel</Button>
-            <Button onClick={handleUpdateRoute} disabled={loading} className="rounded-lg bg-blue-600 hover:bg-blue-700">
-              Save
+            <Button variant="outline" onClick={() => handleRouteDialogOpenChange(false)} className="rounded-lg" disabled={routeChangeState === "submitting" || routeChangeState === "validating"}>Cancel</Button>
+            <Button
+              onClick={() => void handleUpdateRoute()}
+              disabled={!canSubmitRouteChange}
+              className="rounded-lg bg-blue-600 hover:bg-blue-700"
+            >
+              {routeChangeState === "validating" ? "Validating..." : routeChangeState === "submitting" ? "Saving..." : "Save"}
             </Button>
           </DialogFooter>
         </DialogContent>
