@@ -15,10 +15,12 @@ interface AdminUser {
     email: string;
     organizationName?: string;
     organizationSlug?: string;
+    plan?: string;
     organization?: {
         id?: string;
         name?: string;
         slug?: string;
+        plan?: string;
     };
 }
 
@@ -29,6 +31,7 @@ interface AuthContextValue {
     login: (payload: LoginPayload) => Promise<void>;
     signup: (payload: SignupPayload) => Promise<void>;
     logout: () => void;
+    hasPlan: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -54,6 +57,7 @@ const normalizeAdminUser = (admin?: AdminUser | null): AdminUser | null => {
         ...admin,
         organizationName: admin.organizationName ?? admin.organization?.name,
         organizationSlug: admin.organizationSlug ?? admin.organization?.slug,
+        plan: admin.plan ?? admin.organization?.plan,
     };
 };
 
@@ -114,8 +118,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
     }, []);
 
+    const hasPlan = !!user?.plan;
+
     return (
-        <AuthContext value={{ user, token, isLoading, login, signup, logout }}>
+        <AuthContext value={{ user, token, isLoading, login, signup, logout, hasPlan }}>
             {children}
         </AuthContext>
     );
