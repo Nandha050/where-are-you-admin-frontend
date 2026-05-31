@@ -81,6 +81,62 @@ export type ActivatePlanPayload =
     | { planCode: 'TRIAL_7D' }
     | { planCode: Exclude<PlanCode, 'TRIAL_7D'>; busCount: number };
 
+export type RazorpayPlanPayload =
+    | { planCode: 'TRIAL_7D' }
+    | { planCode: Exclude<PlanCode, 'TRIAL_7D'>; busCount: number };
+
+export interface RazorpayOrderPayload {
+    planCode: Exclude<PlanCode, 'TRIAL_7D'>;
+    busCount: number;
+}
+
+export interface RazorpayOrderResponse {
+    order: {
+        orderId: string;
+        amount: number;
+        currency: string;
+    };
+    keyId: string;
+}
+
+export interface RazorpayVerifyPayload {
+    orderId: string;
+    paymentId: string;
+    signature: string;
+}
+
+export interface PlanCapacityResponse {
+    remainingBusSlots?: number;
+    currentBusCount?: number;
+    busLimit?: number;
+}
+
+export interface PlanSummaryActivePlan {
+    planName?: string;
+    busLimit?: number;
+    startsAt?: string;
+    endsAt?: string;
+    status?: string;
+}
+
+export interface PlanSummaryResponse {
+    activePlans?: PlanSummaryActivePlan[];
+}
+
+export interface PaymentHistoryItem {
+    planName?: string;
+    busCount?: number;
+    amount?: number;
+    status?: "paid" | "failed" | "created" | string;
+    createdAt?: string;
+    paidAt?: string;
+    failureReason?: string;
+}
+
+export interface PaymentHistoryResponse {
+    history?: PaymentHistoryItem[];
+}
+
 export interface MemberLoginPayload {
     role: 'user' | 'driver';
     memberId: string;
@@ -99,6 +155,23 @@ export const memberLogin = (data: MemberLoginPayload) =>
 
 export const activatePlan = (data: ActivatePlanPayload) =>
     api.post("/api/admin/plans/activate", data);
+
+export const createRazorpayOrder = (data: RazorpayOrderPayload) =>
+    api.post<RazorpayOrderResponse>("/api/admin/plans/razorpay/order", data);
+
+export const verifyRazorpayPayment = (data: RazorpayVerifyPayload) =>
+    api.post("/api/admin/plans/razorpay/verify", data);
+
+export const getPlanCapacity = () =>
+    api.get<PlanCapacityResponse | { data?: PlanCapacityResponse }>("/api/admin/plans/capacity");
+
+export const getPlanHistory = () =>
+    api.get<PaymentHistoryResponse | { history?: PaymentHistoryItem[] } | { data?: PaymentHistoryResponse }>("/api/admin/plans/history");
+
+export const getPlanStatus = (orderId: string) =>
+    api.get("/api/admin/plans/razorpay/status", {
+        params: { orderId },
+    });
 
 export const getPlans = () =>
     api.get("/api/admin/plans");
