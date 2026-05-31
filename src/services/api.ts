@@ -70,8 +70,22 @@ export interface AuthResponse {
             id?: string;
             name?: string;
             slug?: string;
+            plan?: string;
         };
     };
+}
+
+export type PlanCode = 'MONTHLY_1' | 'QUARTERLY_3' | 'SEMIANNUAL_6' | 'ANNUAL_12' | 'TRIAL_7D';
+
+export type ActivatePlanPayload =
+    | { planCode: 'TRIAL_7D' }
+    | { planCode: Exclude<PlanCode, 'TRIAL_7D'>; busCount: number };
+
+export interface MemberLoginPayload {
+    role: 'user' | 'driver';
+    memberId: string;
+    password: string;
+    organizationSlug: string;
 }
 
 export const adminLogin = (data: LoginPayload) =>
@@ -79,6 +93,21 @@ export const adminLogin = (data: LoginPayload) =>
 
 export const adminSignup = (data: SignupPayload) =>
     api.post<AuthResponse>("/api/auth/admin/signup", data);
+
+export const memberLogin = (data: MemberLoginPayload) =>
+    api.post<AuthResponse>("/api/auth/member/login", data);
+
+export const activatePlan = (data: ActivatePlanPayload) =>
+    api.post("/api/admin/plans/activate", data);
+
+export const getPlans = () =>
+    api.get("/api/admin/plans");
+
+export const getCurrentPlan = () =>
+    api.get("/api/admin/plans/current");
+
+export const getPlanSummary = () =>
+    api.get("/api/admin/plans/summary");
 
 // ─── Routes ────────────────────────────────────────────────────────────────
 
@@ -147,6 +176,23 @@ export interface Route {
 }
 
 export const getRoutes = () => api.get<Route[] | { routes: Route[] } | { data: Route[] }>("/api/admin/routes");
+export interface RouteOption {
+    id: string;
+    name: string;
+    label: string;
+    startName?: string;
+    endName?: string;
+    startLat?: number;
+    startLng?: number;
+    endLat?: number;
+    endLng?: number;
+}
+
+export const getRouteOptions = (q?: string) =>
+    api.get<{ routes: RouteOption[] } | { data: RouteOption[] } | RouteOption[]>("/api/admin/routes/options", {
+        params: q ? { q } : undefined,
+    });
+
 const ROUTE_DETAIL_ENDPOINTS = [
     "/api/admin/routes",
     "/routes",
@@ -373,9 +419,11 @@ export interface User {
     _id?: string;
     id?: string;
     name: string;
+    memberId?: string;
+    routeId?: string;
+    routeName?: string;
     email?: string;
     phone?: string;
-    memberId?: string;
     role?: string;
     createdAt?: string;
 }
@@ -383,17 +431,19 @@ export interface User {
 export interface CreateUserPayload {
     name: string;
     memberId: string;
-    password: string;
+    routeId?: string;
     email?: string;
     phone?: string;
+    password: string;
 }
 
 export interface UpdateUserPayload {
     name?: string;
     memberId?: string;
-    password?: string;
+    routeId?: string | null;
     email?: string;
     phone?: string;
+    password?: string;
 }
 
 export const getUsers = (q?: string) =>

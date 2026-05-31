@@ -11,6 +11,7 @@ import {
     Settings,
     X,
     Route,
+    CreditCard,
     LogOut,
     UserRound,
     UsersRound,
@@ -25,6 +26,7 @@ const navItems = [
     { label: "Drivers", icon: UserRound, href: "/drivers" },
     { label: "Users", icon: UsersRound, href: "/users" },
     { label: "Route Planning", icon: Route, href: "/route-management" },
+    { label: "Plans", icon: CreditCard, href: "/plans" },
 ];
 
 interface SidebarProps {

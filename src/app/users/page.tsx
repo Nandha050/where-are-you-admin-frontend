@@ -27,8 +27,10 @@ import {
   createUser,
   deleteUser,
   getUsers,
+  getRouteOptions,
   updateUser,
   type CreateUserPayload,
+  type RouteOption,
   type UpdateUserPayload,
   type User,
 } from "@/services/api";
@@ -85,6 +87,149 @@ const validatePayload = (payload: {
 
 const normalizeCompare = (value?: string) => (value || "").trim().toLowerCase();
 
+const extractRouteOptions = (input: unknown): RouteOption[] => {
+  if (Array.isArray(input)) return input as RouteOption[];
+  if (!input || typeof input !== "object") return [];
+
+  const obj = input as { routes?: unknown; data?: unknown };
+  if (Array.isArray(obj.routes)) return obj.routes as RouteOption[];
+  if (Array.isArray(obj.data)) return obj.data as RouteOption[];
+  return [];
+};
+
+interface RoutePickerProps {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+}
+
+function RoutePicker({ label, value, onChange, placeholder }: RoutePickerProps) {
+  const [query, setQuery] = useState("");
+  const [options, setOptions] = useState<RouteOption[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loadingOptions, setLoadingOptions] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const resolveSelected = async () => {
+      if (!value) {
+        if (mounted) {
+          setQuery("");
+          setOptions([]);
+        }
+        return;
+      }
+
+      try {
+        const res = await getRouteOptions(value);
+        if (!mounted) return;
+        const route = extractRouteOptions(res.data).find((item) => item.id === value) ?? null;
+        if (route) {
+          setQuery(route.label || route.name || route.id);
+          setOptions([route]);
+        } else {
+          setQuery(value);
+        }
+      } catch {
+        if (mounted) setQuery(value);
+      }
+    };
+
+    void resolveSelected();
+
+    return () => {
+      mounted = false;
+    };
+  }, [value]);
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (!open || !trimmed) {
+      if (!trimmed) setOptions([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setLoadingOptions(true);
+        const res = await getRouteOptions(trimmed);
+        setOptions(extractRouteOptions(res.data));
+      } catch {
+        setOptions([]);
+      } finally {
+        setLoadingOptions(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [open, query]);
+
+  const handleSelect = (route: RouteOption) => {
+    onChange(route.id);
+    setQuery(route.label || route.name || route.id);
+    setOptions([route]);
+    setOpen(false);
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <label className="text-sm font-semibold text-gray-700">{label}</label>
+      <div className="relative">
+        <Input
+          value={query}
+          onFocus={() => setOpen(true)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+            onChange("");
+          }}
+          placeholder={placeholder}
+          className="pr-20"
+        />
+        {value && (
+          <button
+            type="button"
+            onClick={() => {
+              setQuery("");
+              setOptions([]);
+              setOpen(false);
+              onChange("");
+            }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-semibold text-gray-500 hover:bg-gray-100"
+          >
+            Clear
+          </button>
+        )}
+
+        {open && query.trim() && (
+          <div className="absolute z-20 mt-2 max-h-56 w-full overflow-auto rounded-xl border border-gray-200 bg-white shadow-xl">
+            {loadingOptions ? (
+              <div className="px-4 py-3 text-sm text-gray-500">Searching routes...</div>
+            ) : options.length ? (
+              options.map((route) => (
+                <button
+                  key={route.id}
+                  type="button"
+                  onClick={() => handleSelect(route)}
+                  className="flex w-full flex-col gap-1 border-b border-gray-100 px-4 py-3 text-left last:border-b-0 hover:bg-blue-50"
+                >
+                  <span className="text-sm font-semibold text-gray-900">{route.label || route.name}</span>
+                  <span className="text-xs text-gray-500">{route.id}</span>
+                </button>
+              ))
+            ) : (
+              <div className="px-4 py-3 text-sm text-gray-500">No routes found.</div>
+            )}
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-gray-500">Search by route name, start name, end name, or paste a route ID.</p>
+    </div>
+  );
+}
+
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,6 +247,7 @@ export default function UsersPage() {
   const [form, setForm] = useState<CreateUserPayload>({
     name: "",
     memberId: "",
+    routeId: "",
     password: "",
     email: "",
     phone: "",
@@ -109,6 +255,7 @@ export default function UsersPage() {
   const [editForm, setEditForm] = useState<UpdateUserPayload>({
     name: "",
     memberId: "",
+    routeId: "",
     email: "",
     phone: "",
     password: "",
@@ -160,6 +307,7 @@ export default function UsersPage() {
       name: form.name.trim(),
       memberId: form.memberId.trim(),
       password: form.password.trim(),
+      routeId: form.routeId?.trim() || undefined,
       email: form.email?.trim() || undefined,
       phone: form.phone?.trim() || undefined,
     };
@@ -176,7 +324,7 @@ export default function UsersPage() {
       const created = ((data as { user?: User }).user ?? data) as User;
       setUsers((prev) => [created, ...prev]);
       setOpenCreate(false);
-      setForm({ name: "", memberId: "", password: "", email: "", phone: "" });
+      setForm({ name: "", memberId: "", routeId: "", password: "", email: "", phone: "" });
       showToast("success", "User created successfully.");
     } catch (err) {
       const { message } = getErrorMeta(err, "Failed to create user.");
@@ -192,6 +340,7 @@ export default function UsersPage() {
     setEditForm({
       name: user.name,
       memberId: user.memberId ?? "",
+      routeId: user.routeId ?? "",
       email: user.email ?? "",
       phone: user.phone ?? "",
       password: "",
@@ -207,6 +356,7 @@ export default function UsersPage() {
     const payload: UpdateUserPayload = {
       name: editForm.name?.trim() || undefined,
       memberId: editForm.memberId?.trim() || undefined,
+      routeId: editForm.routeId?.trim() || undefined,
       email: editForm.email?.trim() || undefined,
       phone: editForm.phone?.trim() || undefined,
       password: editForm.password?.trim() || undefined,
@@ -365,6 +515,7 @@ export default function UsersPage() {
                 <TableRow className="hover:bg-transparent">
                   <TableHead>Name</TableHead>
                   <TableHead>Member ID</TableHead>
+                  <TableHead>Route</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Phone</TableHead>
                   <TableHead>Created</TableHead>
@@ -387,6 +538,7 @@ export default function UsersPage() {
                       <TableRow key={id || `${user.memberId}-${user.name}`} className="hover:bg-gray-50/60">
                         <TableCell className="font-medium text-gray-900">{user.name}</TableCell>
                         <TableCell>{user.memberId || "-"}</TableCell>
+                        <TableCell>{user.routeName || "-"}</TableCell>
                         <TableCell>{user.email || "-"}</TableCell>
                         <TableCell>{user.phone || "-"}</TableCell>
                         <TableCell>{formatDate(user.createdAt)}</TableCell>
@@ -420,6 +572,12 @@ export default function UsersPage() {
           <div className="space-y-3">
             <Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} placeholder="Name" />
             <Input value={form.memberId} onChange={(e) => setForm((p) => ({ ...p, memberId: e.target.value }))} placeholder="Member ID" />
+            <RoutePicker
+              label="Route"
+              value={form.routeId ?? ""}
+              onChange={(routeId) => setForm((p) => ({ ...p, routeId }))}
+              placeholder="Search and select route"
+            />
             <Input type="email" value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} placeholder="Email (optional)" />
             <Input value={form.phone} onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))} placeholder="Phone (optional)" />
             <Input type="password" value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} placeholder="Password" />
@@ -445,6 +603,12 @@ export default function UsersPage() {
           <div className="space-y-3">
             <Input value={editForm.name || ""} onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))} placeholder="Name" />
             <Input value={editForm.memberId || ""} onChange={(e) => setEditForm((p) => ({ ...p, memberId: e.target.value }))} placeholder="Member ID" />
+            <RoutePicker
+              label="Route"
+              value={editForm.routeId ?? ""}
+              onChange={(routeId) => setEditForm((p) => ({ ...p, routeId }))}
+              placeholder="Search and select route"
+            />
             <Input type="email" value={editForm.email || ""} onChange={(e) => setEditForm((p) => ({ ...p, email: e.target.value }))} placeholder="Email (optional)" />
             <Input value={editForm.phone || ""} onChange={(e) => setEditForm((p) => ({ ...p, phone: e.target.value }))} placeholder="Phone (optional)" />
             <Input type="password" value={editForm.password || ""} onChange={(e) => setEditForm((p) => ({ ...p, password: e.target.value }))} placeholder="New password (optional)" />
