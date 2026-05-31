@@ -865,7 +865,7 @@ export default function BusesPage() {
         open={isDeleteDialogOpen}
         onOpenChange={setIsDeleteDialogOpen}
         onConfirm={handleDeleteBus}
-        bus={selectedBus}
+        bus={selectedBus ?? undefined}
       />
     </>
   )
