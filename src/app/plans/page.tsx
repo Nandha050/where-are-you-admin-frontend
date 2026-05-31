@@ -494,7 +494,7 @@ export default function PlansPage() {
                     </section>
 
                     <section className="grid gap-4 lg:grid-cols-[1.4fr_0.6fr]">
-                            <Card className="border-slate-200 bg-white p-6 shadow-sm">
+                        <Card className="border-slate-200 bg-white p-6 shadow-sm">
                             <div className="flex items-start justify-between gap-4">
                                 <div>
                                     <div className="flex items-center gap-2">
@@ -509,23 +509,15 @@ export default function PlansPage() {
                                     <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${currentPlan?.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
                                         {currentPlan?.status ?? "inactive"}
                                     </span>
-                                    <div 
-                                         type="button"
-                                        onClick={() => setShowHistory(true)}
-                                        className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200"
-                                    >
                                     <button
                                         type="button"
                                         onClick={() => setShowHistory(true)}
+                                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                                         aria-label="Open payment history"
                                         title="Payment history"
                                     >
                                         <History className="h-4 w-4" />
                                     </button>
-                                    
-                                    <span>payment</span>
-                                    </div>
-                                    
                                 </div>
                             </div>
 
@@ -546,7 +538,6 @@ export default function PlansPage() {
                                     </div>
                                 ))}
                             </div>
-
                         </Card>
 
                         <Card className="border-slate-200 bg-white p-6 shadow-sm">
